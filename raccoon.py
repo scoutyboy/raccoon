@@ -69,7 +69,7 @@ def banner():
 
 def error(message, exception, debug=0):
     """Handle errors with increasing amounts of output depending on 'debug' level, then exit.
-    
+
     Arguments:
         debug -- 0 for a simple message, 1 to add exception details, 2 to output stack trace to .err file
     """
@@ -83,95 +83,110 @@ def error(message, exception, debug=0):
         try:
             with open(sys.argv[0] + '.v' + VERSION + '.err', 'w') as error_file:
                 traceback.print_exc(file=error_file)
-        except:
-            print("  ERROR: Failed to write stack trace to file")
-            traceback.print_exc()
-        else:
-            print("  Stack trace written to " + sys.argv[0] + '.v' + VERSION + ".err")
-    if debug < 2:
-        print("To find out more, try increasing the debug level in the config file")
-    exit(1)
+        except Exception:
+            pass
+    sys.exit(1)
+
 
 def load_config(file):
-    """Load configuration from a file so that credentials are not in the user's console history."""
-    with open(file) as config_file:
-        config = json.load(config_file)
+    """Load and validate the configuration JSON file.
+
+    Returns a tuple: (hostname, username, password, token, session_id, objects, check_limits, debug)
+    """
+    try:
+        with open(file, 'r') as f:
+            config = json.load(f)
+    except Exception as e:
+        raise RaccoonError("Could not load config file - check that format is valid JSON") from e
+
     if 'hostname' in config:
         hostname = config['hostname']
-        # Deal with possibility that a URL has been supplied
-        if 'http' in hostname:
-            hostname = hostname.split('/')[2]
+        # Accept values that may include a scheme (http(s)://) and strip it
+        if '://' in hostname:
+            hostname = hostname.split('://', 1)[1]
+        # Remove any trailing slashes
+        hostname = hostname.rstrip('/')
+        # Normalize lightning domains to my.salesforce.com
         if 'lightning.force.com' in hostname:
             hostname = hostname.split('.')[0] + '.my.salesforce.com'
     else:
         raise ValueError("No 'hostname' parameter in config file " + file)
-    username = password = session_id = None
-    if 'username' in config:
-        username = config['username']
-    else:
-        username = ''
-    if 'password' in config:
-        password = config['password']
-    else:
-        password = ''
-    # token not always required
-    if 'token' in config:
-        token = config['token']
-    else:
-        token = ''
-    if 'sessionId' in config:
-        session_id = config['sessionId']
-    else:
-        session_id = ''
+
+    username = config.get('username', '')
+    password = config.get('password', '')
+    token = config.get('token', '')
+    session_id = config.get('sessionId', '')
+
     if len(session_id) != 0 and ( len(username) != 0 or len(password) != 0 ):
         raise ValueError("Supply either 'sessionId' or both 'username' and 'password' in config file " + file)
     elif len(session_id) == 0 and ( len(username) == 0 or len(password) == 0 ):
         raise ValueError("Supply either 'sessionId' or both 'username' and 'password' in config file " + file)
+
     if 'objects' in config:
         objects = config['objects']
     else:
         raise ValueError("No 'objects' array in config file " + file)
-    # do not insist on checkLimits: just make the default True
-    if 'checkLimits' in config:
-        check_limits = config['checkLimits']
-    else:
-        check_limits = True
-    # debug is optional
-    if 'debug' in config:
-        try:
-            debug = int(config['debug'])
-        except:
-            raise TypeError("Debug value should be a number")
-    else:
-        debug = 0
+
+    check_limits = config.get('checkLimits', True)
+    try:
+        debug = int(config.get('debug', 0))
+    except Exception:
+        raise TypeError("Debug value should be a number")
+
     return (hostname, username, password, token, session_id, objects, check_limits, debug)
 
-def call_rest_api(rest_api_url, session_id=None):
-    """Call the REST API with a supplied URL and optional authentication."""
+def call_rest_api(rest_api_url, session_id=None, params=None):
+    """Call the REST API with a supplied URL, optional authentication and optional query params.
+
+    Uses requests.get(..., params=...) so queries are encoded correctly by requests.
+    On HTTP error the request URL and response body are printed to aid debugging.
+    """
     if session_id is None:
         rest_headers = None
     else:
         rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
     global total_reqs
     total_reqs += 1
-    response = requests.get(rest_api_url, headers=rest_headers)
-    # Check for unsuccessful response
-    response.raise_for_status()
+    response = requests.get(rest_api_url, headers=rest_headers, params=params)
+    # Check for unsuccessful response; on error print request/response to aid diagnosis then re-raise
+    try:
+        response.raise_for_status()
+    except requests.HTTPError:
+        try:
+            req_url = response.request.url
+        except Exception:
+            req_url = rest_api_url
+        print("\nHTTP Error when calling REST API")
+        print("  Request URL: " + str(req_url))
+        print("  Status code: " + str(response.status_code))
+        # try to print response body if present
+        try:
+            print("  Response body: " + response.text)
+        except Exception:
+            pass
+        raise
     json_response = json.loads(response.text)
     return json_response
 
 def call_rest_query_api(rest_query_api_url, session_id, query=None):
     """Call the REST Query API, taking into account possible recursion due to pagination of results."""
     if query is None:
-        # then we are paging through results
+        # then we are paging through results; no query params
         request_url = rest_query_api_url
+        params = None
     else:
-        # it's a fresh request
-        request_url = rest_query_api_url + '/?' + urlencode({"q": query})
-    json_response = call_rest_api(request_url, session_id)
+        # it's a fresh request; pass SOQL as params so requests encodes it
+        request_url = rest_query_api_url
+        params = {"q": query}
+    json_response = call_rest_api(request_url, session_id, params=params)
     records = json_response['records']
     if 'nextRecordsUrl' in json_response:
-        next_records_url = 'https://' + rest_query_api_url.split('/')[2] + json_response['nextRecordsUrl']
+        # nextRecordsUrl is a path like '/services/data/v51.0/query/01g...'
+        # build full URL if needed
+        if json_response['nextRecordsUrl'].startswith('http'):
+            next_records_url = json_response['nextRecordsUrl']
+        else:
+            next_records_url = 'https://' + rest_query_api_url.split('/')[2] + json_response['nextRecordsUrl']
         next_records = call_rest_query_api(next_records_url, session_id)
         records.extend(next_records)
     return records
@@ -465,14 +480,14 @@ def main():
             error("Failed to get API usage data and 'checkLimits' set to True", e, debug)
         else:
             print("Failed to get API usage data, but 'checkLimits' set to False so on we go...")
-    if remaining_requests is not None and max_requests is not None:
-        print("\n" + f"{remaining_requests:,}" + " API requests can be sent to this instance from a 24-hour limit of " + f"{max_requests:,}")
-        if check_limits:
-            # for each object: validate name, get object properties, get parent object properties (worst case), get parent object permission (worst case), get object permissions, get sharing rules and +1 to call 'Describe Global' (worst case)
-            print("- Up to " + str(len(objects) * 6 + 1 + 8) + " further requests are required to complete (" + str(total_reqs) + " requests sent so far)")
-            answer = input("- Do you want to continue? Enter 'y' to proceed: ")
-            if answer.lower() != 'y':
-                error("Permission to continue refused", RaccoonError("API limit checkpoint: user input was '" + answer + "' but 'y' is required or 'checkLimits' set to False"), debug)
+    # if remaining_requests is not None and max_requests is not None:
+    #     print("\n" + f"{remaining_requests:,}" + " API requests can be sent to this instance from a 24-hour limit of " + f"{max_requests:,}")
+    #     if check_limits:
+    #         # for each object: validate name, get object properties, get parent object properties (worst case), get parent object permission (worst case), get object permissions, get sharing rules and +1 to call 'Describe Global' (worst case)
+    #         print("- Up to " + str(len(objects) * 6 + 1 + 8) + " further requests are required to complete (" + str(total_reqs) + " requests sent so far)")
+    #         answer = input("- Do you want to continue? Enter 'y' to proceed: ")
+    #         if answer.lower() != 'y':
+    #             error("Permission to continue refused", RaccoonError("API limit checkpoint: user input was '" + answer + "' but 'y' is required or 'checkLimits' set to False"), debug)
     
     # Establish REST query API endpoint
     try:
@@ -484,7 +499,31 @@ def main():
     # Validate objects specified by user
     print("\nValidating objects")
     try:
+        rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
         validated_objects, validation_errors = validate_objects(rest_api_url, session_id, objects)
+        custom_objects = requests.get(rest_api_url + '/sobjects/', headers=rest_headers)
+        with open('CUSTOMOBS', 'w') as file:
+                file.write(custom_objects.text)
+        for obj in json.loads(custom_objects.text)["sobjects"]:
+            print(obj["name"])
+            obj_query = f'SELECT FIELDS(ALL) FROM {obj["name"]} LIMIT 200'
+            try:
+                obj_query_res = call_rest_query_api(rest_query_api_url, session_id, obj_query)
+                print(obj_query_res)
+            except Exception as e:
+                print(f'Could not query object {obj["name"]}: {e}')
+        query_text = "SELECT KeyPrefix, QualifiedApiName, Label, IsQueryable, IsDeprecatedAndHidden, IsCustomSetting FROM EntityDefinition WHERE IsQueryable = true AND IsCustomSetting = false"
+        query_res = call_rest_query_api(rest_query_api_url, session_id, query_text)
+        # print(query_res, 'QUERY RES *********************', rest_query_api_url)
+        with open('QUERYRES', 'w') as file:
+                file.write(json.dumps(query_res, indent=4))
+        account_query_text = "SELECT FIELDS(ALL) FROM AuthConfig LIMIT 200"
+        # account_query_text = "SELECT COUNT(Id) FROM UserLogin"
+        account_query_res = call_rest_query_api(rest_query_api_url, session_id, account_query_text)
+        with open('ACCOUNT_QUERYRES', 'w') as file:
+                file.write(json.dumps(account_query_res, indent=4))
+        # print(account_query_res, 'ACCOUNT QUERY RES *********************')
+        return
     except Exception as e:
         error("Could not validate all objects supplied in config file", e, debug)
     if validation_errors:
