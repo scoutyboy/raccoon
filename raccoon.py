@@ -154,9 +154,7 @@ def call_rest_api(rest_api_url, session_id=None):
         rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
     global total_reqs
     total_reqs += 1
-    # print('total reqs', rest_api_url, 'headers', rest_headers)
     response = requests.get(rest_api_url, headers=rest_headers)
-    # print('respoinse', response.text)
     # Check for unsuccessful response
     response.raise_for_status()
     json_response = json.loads(response.text)
