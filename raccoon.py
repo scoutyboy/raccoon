@@ -154,7 +154,9 @@ def call_rest_api(rest_api_url, session_id=None):
         rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
     global total_reqs
     total_reqs += 1
+    # print('total reqs', rest_api_url, 'headers', rest_headers)
     response = requests.get(rest_api_url, headers=rest_headers)
+    # print('respoinse', response.text)
     # Check for unsuccessful response
     response.raise_for_status()
     json_response = json.loads(response.text)
@@ -256,8 +258,8 @@ def login(hostname, username, password, token):
 def verify_session(rest_api_url, session_id):
     """Check session ID works and derive username."""
     try:
-        chatter_users_me = call_rest_api(rest_api_url + '/chatter/users/me', session_id)
-        username = chatter_users_me['username']
+        chatter_users_me = call_rest_api(rest_api_url, session_id)
+        # username = chatter_users_me['username']
     except:
         # could also try rest_api_url + '/connect/organization', pull out userId and get username from /sobjects/User/{userId}
         raise RaccoonError("Failed to identify user from session ID - check cookie domain is .my.salesforce.com or .cloudforce.com")
@@ -449,7 +451,7 @@ def main():
         if len(session_id) == 0:
             session_id, metadata_url = login(hostname, username, password, token)
         else:
-            username = verify_session(rest_api_url, session_id)
+            # username = verify_session(rest_api_url, session_id)
             metadata_url = 'https://' + hostname + '/services/Soap/m/' + API_VERSION + '/' + session_id.split('!')[0]
     except Exception as e:
         error("Could not login - check hostname, credentials and account permissions", e, debug)
