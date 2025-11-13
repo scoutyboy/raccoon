@@ -480,14 +480,14 @@ def main():
             error("Failed to get API usage data and 'checkLimits' set to True", e, debug)
         else:
             print("Failed to get API usage data, but 'checkLimits' set to False so on we go...")
-    # if remaining_requests is not None and max_requests is not None:
-    #     print("\n" + f"{remaining_requests:,}" + " API requests can be sent to this instance from a 24-hour limit of " + f"{max_requests:,}")
-    #     if check_limits:
-    #         # for each object: validate name, get object properties, get parent object properties (worst case), get parent object permission (worst case), get object permissions, get sharing rules and +1 to call 'Describe Global' (worst case)
-    #         print("- Up to " + str(len(objects) * 6 + 1 + 8) + " further requests are required to complete (" + str(total_reqs) + " requests sent so far)")
-    #         answer = input("- Do you want to continue? Enter 'y' to proceed: ")
-    #         if answer.lower() != 'y':
-    #             error("Permission to continue refused", RaccoonError("API limit checkpoint: user input was '" + answer + "' but 'y' is required or 'checkLimits' set to False"), debug)
+    if remaining_requests is not None and max_requests is not None:
+        print("\n" + f"{remaining_requests:,}" + " API requests can be sent to this instance from a 24-hour limit of " + f"{max_requests:,}")
+        if check_limits:
+            # for each object: validate name, get object properties, get parent object properties (worst case), get parent object permission (worst case), get object permissions, get sharing rules and +1 to call 'Describe Global' (worst case)
+            print("- Up to " + str(len(objects) * 6 + 1 + 8) + " further requests are required to complete (" + str(total_reqs) + " requests sent so far)")
+            answer = input("- Do you want to continue? Enter 'y' to proceed: ")
+            if answer.lower() != 'y':
+                error("Permission to continue refused", RaccoonError("API limit checkpoint: user input was '" + answer + "' but 'y' is required or 'checkLimits' set to False"), debug)
     
     # Establish REST query API endpoint
     try:
@@ -505,28 +505,34 @@ def main():
         with open('RECORDCOUNT', 'w') as file:
                 file.write(record_count.text)
         print(record_count.text, 'record count ***************')
-        return
         custom_objects = requests.get(rest_api_url + '/sobjects/', headers=rest_headers)
         with open('CUSTOMOBS', 'w') as file:
                 file.write(custom_objects.text)
         for obj in json.loads(custom_objects.text)["sobjects"]:
             print(obj["name"])
-            obj_query = f'SELECT FIELDS(ALL) FROM {obj["name"]} LIMIT 200'
-            try:
-                obj_query_res = call_rest_query_api(rest_query_api_url, session_id, obj_query)
-                if not obj_query_res:
-                    print(f'No records found for object {obj["name"]}, skipping...')
-                    continue
-                print(obj_query_res)
-                with open(f'./results/OBJ_{obj["name"]}_QUERYRES', 'w') as file:
-                    file.write(json.dumps(obj_query_res, indent=4))
-            except Exception as e:
-                print(f'Could not query object {obj["name"]}: {e}')
-                with open(f'./results/errors/OBJ_{obj["name"]}_QUERYRES_ERROR', 'w') as file:
-                    file.write(str(e))
+            schema_query_text = f"SELECT QualifiedApiName, Label FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = '{obj["name"]}'"
+            schema_query_res = requests.get(rest_api_url + "/tooling/query", headers=rest_headers, params={'q':schema_query_text})
+            with open(f'./results/schema/OBJ_{obj["name"]}_DESCRIBE', 'w') as file:
+                file.write(json.dumps(schema_query_res.text, indent=4))
+
+        # for obj in json.loads(custom_objects.text)["sobjects"]:
+        #     print(obj["name"])
+        #     obj_query = f'SELECT FIELDS(ALL) FROM {obj["name"]} LIMIT 200'
+        #     try:
+        #         obj_query_res = call_rest_query_api(rest_query_api_url, session_id, obj_query)
+        #         if not obj_query_res == []:
+        #             print(f'No records found for object {obj["name"]}, skipping...')
+        #             continue
+        #         print(obj_query_res)
+        #         with open(f'./results/OBJ_{obj["name"]}_QUERYRES', 'w') as file:
+        #             file.write(json.dumps(obj_query_res, indent=4))
+        #     except Exception as e:
+        #         print(f'Could not query object {obj["name"]}: {e}')
+        #         with open(f'./results/errors/OBJ_{obj["name"]}_QUERYRES_ERROR', 'w') as file:
+        #             file.write(str(e))
         query_text = "SELECT KeyPrefix, QualifiedApiName, Label, IsQueryable, IsDeprecatedAndHidden, IsCustomSetting FROM EntityDefinition WHERE IsQueryable = true AND IsCustomSetting = false"
         query_res = call_rest_query_api(rest_query_api_url, session_id, query_text)
-        # print(query_res, 'QUERY RES *********************', rest_query_api_url)
+        print(query_res, 'QUERY RES *********************', rest_query_api_url)
         with open('QUERYRES', 'w') as file:
                 file.write(json.dumps(query_res, indent=4))
         account_query_text = "SELECT FIELDS(ALL) FROM AuthConfig LIMIT 200"
@@ -535,7 +541,6 @@ def main():
         with open('ACCOUNT_QUERYRES', 'w') as file:
                 file.write(json.dumps(account_query_res, indent=4))
         # print(account_query_res, 'ACCOUNT QUERY RES *********************')
-        return
     except Exception as e:
         error("Could not validate all objects supplied in config file", e, debug)
     if validation_errors:
