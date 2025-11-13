@@ -501,6 +501,11 @@ def main():
     try:
         rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
         validated_objects, validation_errors = validate_objects(rest_api_url, session_id, objects)
+        record_count = requests.get(rest_api_url + '/limits/recordCount', headers=rest_headers)
+        with open('RECORDCOUNT', 'w') as file:
+                file.write(record_count.text)
+        print(record_count.text, 'record count ***************')
+        return
         custom_objects = requests.get(rest_api_url + '/sobjects/', headers=rest_headers)
         with open('CUSTOMOBS', 'w') as file:
                 file.write(custom_objects.text)
@@ -509,9 +514,16 @@ def main():
             obj_query = f'SELECT FIELDS(ALL) FROM {obj["name"]} LIMIT 200'
             try:
                 obj_query_res = call_rest_query_api(rest_query_api_url, session_id, obj_query)
+                if not obj_query_res:
+                    print(f'No records found for object {obj["name"]}, skipping...')
+                    continue
                 print(obj_query_res)
+                with open(f'./results/OBJ_{obj["name"]}_QUERYRES', 'w') as file:
+                    file.write(json.dumps(obj_query_res, indent=4))
             except Exception as e:
                 print(f'Could not query object {obj["name"]}: {e}')
+                with open(f'./results/errors/OBJ_{obj["name"]}_QUERYRES_ERROR', 'w') as file:
+                    file.write(str(e))
         query_text = "SELECT KeyPrefix, QualifiedApiName, Label, IsQueryable, IsDeprecatedAndHidden, IsCustomSetting FROM EntityDefinition WHERE IsQueryable = true AND IsCustomSetting = false"
         query_res = call_rest_query_api(rest_query_api_url, session_id, query_text)
         # print(query_res, 'QUERY RES *********************', rest_query_api_url)
