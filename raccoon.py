@@ -268,6 +268,76 @@ def login(hostname, username, password, token):
         metadata_url = metadata_url_element.text
     return (session_id, metadata_url)
 
+def perform_schema_crawl(rest_api_url, session_id):
+    """Crawl the schema via the Tooling API to extract field definitions for all custom objects."""
+    rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
+    return
+
+def get_data_objects(rest_api_url, session_id):
+    """Retrieve all data objects via the REST API."""
+    try:
+        rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
+        data_objects = requests.get(rest_api_url + '/sobjects/', headers=rest_headers)
+        with open('CUSTOMOBS', 'w') as file:
+                file.write(data_objects.text)
+        return(data_objects.text)
+    except Exception as e:
+        raise RaccoonError("Failed to get custom objects from REST API") from e
+
+def enumerate_data_objects(rest_api_url, session_id, data_objects):
+    for obj in json.loads(data_objects)["sobjects"]:
+        try:
+            print(obj["name"])
+            rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
+            schema_query_text = f"SELECT QualifiedApiName, Label FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = '{obj["name"]}'"
+            schema_query_res = requests.get(rest_api_url + "/tooling/query", headers=rest_headers, params={'q':schema_query_text})
+            with open(f'./results/schema/OBJ_{obj["name"]}_DESCRIBE', 'w') as file:
+                file.write(json.dumps(schema_query_res.text, indent=4))
+        except Exception as e:
+            print(f'Could not query object {obj["name"]}: {e}')
+            with open(f'./results/errors/OBJ_{obj["name"]}_DESCRIBE_ERROR', 'w') as file:
+                file.write(str(e))
+
+def get_record_counts(rest_api_url, session_id):
+    """Get record counts for objects with data."""
+    try:
+        rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
+        record_count = requests.get(rest_api_url + '/limits/recordCount', headers=rest_headers)
+        records = json.loads(record_count.text)["sObjects"]
+        records = sorted(records, key=itemgetter('count'), reverse=True)
+        with open('record_count_results', 'w') as file:
+            file.write(str(records))
+    except Exception as e:
+        raise RaccoonError("Failed to get record counts from REST API") from e
+    return(record_count.text)
+
+# def retrieve_all_data_objects(rest_api_url, session_id):
+#         for obj in json.loads(custom_objects.text)["sobjects"]:
+#             print(obj["name"])
+#             obj_query = f'SELECT FIELDS(ALL) FROM {obj["name"]} LIMIT 200'
+#             try:
+#                 obj_query_res = call_rest_query_api(rest_query_api_url, session_id, obj_query)
+#                 if not obj_query_res == []:
+#                     print(f'No records found for object {obj["name"]}, skipping...')
+#                     continue
+#                 print(obj_query_res)
+#                 with open(f'./results/OBJ_{obj["name"]}_QUERYRES', 'w') as file:
+#                     file.write(json.dumps(obj_query_res, indent=4))
+#             except Exception as e:
+#                 print(f'Could not query object {obj["name"]}: {e}')
+#                 with open(f'./results/errors/OBJ_{obj["name"]}_QUERYRES_ERROR', 'w') as file:
+#                     file.write(str(e))
+
+def view_available_tables(rest_query_api_url, session_id):
+    """View available tables via the REST Query API."""
+    try:
+        query_text = "SELECT KeyPrefix, QualifiedApiName, Label, IsQueryable, IsDeprecatedAndHidden, IsCustomSetting FROM EntityDefinition WHERE IsQueryable = true AND IsCustomSetting = false"
+        query_res = call_rest_query_api(rest_query_api_url, session_id, query_text)
+        with open('available_tables_res', 'w') as file:
+                file.write(json.dumps(query_res, indent=4))
+    except Exception as e:
+        raise RaccoonError("Failed to get available tables from REST Query API") from e
+
 def verify_session(rest_api_url, session_id):
     """Check session ID works and derive username."""
     try:
@@ -497,50 +567,14 @@ def main():
         error("Could not establish REST query API endpoint", e, debug)
     
     # Validate objects specified by user
+    get_record_counts(rest_api_url, session_id)
+    view_available_tables(rest_query_api_url, session_id)
+    data_objects = get_data_objects(rest_api_url, session_id)
+    # enumerate_data_objects(rest_api_url, session_id, data_objects)
+
     print("\nValidating objects")
     try:
-        rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
         validated_objects, validation_errors = validate_objects(rest_api_url, session_id, objects)
-        record_count = requests.get(rest_api_url + '/limits/recordCount', headers=rest_headers)
-        with open('RECORDCOUNT', 'w') as file:
-                file.write(record_count.text)
-        print(record_count.text, 'record count ***************')
-        custom_objects = requests.get(rest_api_url + '/sobjects/', headers=rest_headers)
-        with open('CUSTOMOBS', 'w') as file:
-                file.write(custom_objects.text)
-        for obj in json.loads(custom_objects.text)["sobjects"]:
-            print(obj["name"])
-            schema_query_text = f"SELECT QualifiedApiName, Label FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = '{obj["name"]}'"
-            schema_query_res = requests.get(rest_api_url + "/tooling/query", headers=rest_headers, params={'q':schema_query_text})
-            with open(f'./results/schema/OBJ_{obj["name"]}_DESCRIBE', 'w') as file:
-                file.write(json.dumps(schema_query_res.text, indent=4))
-
-        # for obj in json.loads(custom_objects.text)["sobjects"]:
-        #     print(obj["name"])
-        #     obj_query = f'SELECT FIELDS(ALL) FROM {obj["name"]} LIMIT 200'
-        #     try:
-        #         obj_query_res = call_rest_query_api(rest_query_api_url, session_id, obj_query)
-        #         if not obj_query_res == []:
-        #             print(f'No records found for object {obj["name"]}, skipping...')
-        #             continue
-        #         print(obj_query_res)
-        #         with open(f'./results/OBJ_{obj["name"]}_QUERYRES', 'w') as file:
-        #             file.write(json.dumps(obj_query_res, indent=4))
-        #     except Exception as e:
-        #         print(f'Could not query object {obj["name"]}: {e}')
-        #         with open(f'./results/errors/OBJ_{obj["name"]}_QUERYRES_ERROR', 'w') as file:
-        #             file.write(str(e))
-        query_text = "SELECT KeyPrefix, QualifiedApiName, Label, IsQueryable, IsDeprecatedAndHidden, IsCustomSetting FROM EntityDefinition WHERE IsQueryable = true AND IsCustomSetting = false"
-        query_res = call_rest_query_api(rest_query_api_url, session_id, query_text)
-        print(query_res, 'QUERY RES *********************', rest_query_api_url)
-        with open('QUERYRES', 'w') as file:
-                file.write(json.dumps(query_res, indent=4))
-        account_query_text = "SELECT FIELDS(ALL) FROM AuthConfig LIMIT 200"
-        # account_query_text = "SELECT COUNT(Id) FROM UserLogin"
-        account_query_res = call_rest_query_api(rest_query_api_url, session_id, account_query_text)
-        with open('ACCOUNT_QUERYRES', 'w') as file:
-                file.write(json.dumps(account_query_res, indent=4))
-        # print(account_query_res, 'ACCOUNT QUERY RES *********************')
     except Exception as e:
         error("Could not validate all objects supplied in config file", e, debug)
     if validation_errors:
