@@ -338,6 +338,78 @@ def process_record_counts(record_count):
         file.write(json.dumps(records))
 
 
+def merge_record_and_schema(record_count_path='record_count_results', schema_path='results/schema_crawl_results', out_path='record_count_with_schema.json'):
+    """Merge record counts and schema crawl results into a single array of objects.
+
+    Output format: [ {"name": "Account", "count": 1, "Columns": ["Id", "Name", ...] }, ... ]
+    """
+    # Load record counts
+    try:
+        with open(record_count_path, 'r', encoding='utf-8') as f:
+            rc_data = json.load(f)
+    except Exception as e:
+        raise RaccoonError(f"Failed to read record count file '{record_count_path}'") from e
+
+    # Normalize record counts to list of (name,count)
+    records = []
+    if isinstance(rc_data, dict):
+        # single mapping
+        for k, v in rc_data.items():
+            records.append((k, v))
+    elif isinstance(rc_data, list):
+        for item in rc_data:
+            if isinstance(item, dict):
+                # case: {'name': 'Account', 'count': 1}
+                if 'name' in item and 'count' in item:
+                    records.append((item['name'], item['count']))
+                else:
+                    # case: {'Account': 1}
+                    keys = list(item.keys())
+                    if len(keys) == 1:
+                        name = keys[0]
+                        records.append((name, item[name]))
+            else:
+                # skip unknown formats
+                continue
+    else:
+        raise RaccoonError(f"Unexpected format in record count file '{record_count_path}'")
+
+    # Load schema crawl results
+    try:
+        with open(schema_path, 'r', encoding='utf-8') as f:
+            schema_data = json.load(f)
+    except Exception as e:
+        raise RaccoonError(f"Failed to read schema crawl file '{schema_path}'") from e
+
+    # Build schema map name -> fields list
+    schema_map = {}
+    if isinstance(schema_data, list):
+        for entry in schema_data:
+            if isinstance(entry, dict):
+                for k, v in entry.items():
+                    # ensure list
+                    schema_map[k] = v if isinstance(v, list) else []
+
+    # Merge
+    merged = []
+    for name, count in records:
+        fields = schema_map.get(name, [])
+        merged.append({
+            'name': name,
+            'count': count,
+            'columns': fields
+        })
+
+    # Write output
+    try:
+        with open(out_path, 'w', encoding='utf-8') as of:
+            json.dump(merged, of, indent=4)
+    except Exception as e:
+        raise RaccoonError(f"Failed to write merged output to '{out_path}'") from e
+
+    return merged
+
+
 # def retrieve_all_data_objects(rest_api_url, session_id):
 #         for obj in json.loads(custom_objects.text)["sobjects"]:
 #             print(obj["name"])
@@ -598,6 +670,12 @@ def main():
     view_available_tables(rest_query_api_url, session_id)
     # data_objects = get_data_objects(rest_api_url, session_id)
     perform_schema_crawl(rest_api_url, session_id, [r["name"] for r in record_counts])
+    # Merge record counts with schema crawl results into record_count_with_schema.json
+    try:
+        merged = merge_record_and_schema()
+        print(f"Wrote merged record+schema output for {len(merged)} objects to 'record_count_with_schema.json'")
+    except Exception as e:
+        print(f"Warning: failed to merge record counts and schema: {e}")
     # enumerate_data_objects(rest_api_url, session_id, data_objects)
 
     print("\nValidating objects")
