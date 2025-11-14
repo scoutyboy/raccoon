@@ -272,9 +272,11 @@ def get_schema(rest_api_url, session_id, obj):
     """Retrieve the schema for a given object via the REST API."""
     try:
         rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
-        schema = requests.get(rest_api_url + obj['urls']['describe'], headers=rest_headers)
-        with open(f'./results/schema/OBJ_{obj}_DESCRIBE', 'w') as file:
-                file.write(schema.text)
+        schema = requests.get(rest_api_url + f'/sobjects/{obj}/describe', headers=rest_headers)
+
+        # Saves full schema to file
+        # with open(f'./results/schema/{obj}_full_schema.json', 'w', encoding="utf-8") as file:
+        #         file.write(schema.text)
         return(schema.json())
     except Exception as e:
         raise RaccoonError(f"Failed to get schema for object {obj} from REST API") from e
@@ -282,17 +284,13 @@ def get_schema(rest_api_url, session_id, obj):
 def perform_schema_crawl(rest_api_url, session_id, data_objects):
     """Crawl the schema via the Tooling API to extract field definitions for all custom objects."""
     try:
-        rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
         output = []
-        print(data_objects, "DATA OBJECTS*********")
-        for obj in data_objects['sobjects']:
-            print(obj['urls'], "OBJ*********")
-            schema = requests.get(rest_api_url + obj['urls']['describe'], headers=rest_headers)
-            print(rest_api_url + obj['urls']['describe'], "SCHEMA TEXT*********")
-            output.append(schema.json())
-        with open('SCHEMA_CRAWL_RESULTS', 'w') as file:
+        for obj in data_objects:
+            schema = get_schema(rest_api_url, session_id, obj)
+            output.append({obj: [field['name'] for field in schema['fields']]})
+        with open('./results/schema_crawl_results', 'w') as file:
                 file.write(json.dumps(output, indent=4))
-        return schema
+        return output
     except Exception as e:
         raise RaccoonError("Failed to crawl schema via Tooling API") from e
 
@@ -326,14 +324,19 @@ def get_record_counts(rest_api_url, session_id):
     try:
         rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
         record_count = requests.get(rest_api_url + '/limits/recordCount', headers=rest_headers)
-        records = json.loads(record_count.text)["sObjects"]
-        records = sorted(records, key=itemgetter('count'), reverse=True)
-        records = [{item["name"]: item["count"]} for item in records]
-        with open('record_count_results', 'w') as file:
-            file.write(json.dumps(records))
+        process_record_counts(record_count)
     except Exception as e:
         raise RaccoonError("Failed to get record counts from REST API") from e
-    return(record_count.text)
+    return(record_count.json()['sObjects'])
+
+def process_record_counts(record_count):
+    """Process record count data and write to file."""
+    records = json.loads(record_count.text)["sObjects"]
+    records = sorted(records, key=itemgetter('count'), reverse=True)
+    records = [{item["name"]: item["count"]} for item in records]
+    with open('record_count_results', 'w') as file:
+        file.write(json.dumps(records))
+
 
 # def retrieve_all_data_objects(rest_api_url, session_id):
 #         for obj in json.loads(custom_objects.text)["sobjects"]:
@@ -591,10 +594,10 @@ def main():
         error("Could not establish REST query API endpoint", e, debug)
     
     # Validate objects specified by user
-    get_record_counts(rest_api_url, session_id)
+    record_counts = get_record_counts(rest_api_url, session_id)
     view_available_tables(rest_query_api_url, session_id)
-    data_objects = get_data_objects(rest_api_url, session_id)
-    perform_schema_crawl(rest_api_url.replace('/services/data/v51.0', ''), session_id, data_objects)
+    # data_objects = get_data_objects(rest_api_url, session_id)
+    perform_schema_crawl(rest_api_url, session_id, [r["name"] for r in record_counts])
     # enumerate_data_objects(rest_api_url, session_id, data_objects)
 
     print("\nValidating objects")
