@@ -268,10 +268,33 @@ def login(hostname, username, password, token):
         metadata_url = metadata_url_element.text
     return (session_id, metadata_url)
 
-def perform_schema_crawl(rest_api_url, session_id):
+def get_schema(rest_api_url, session_id, obj):
+    """Retrieve the schema for a given object via the REST API."""
+    try:
+        rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
+        schema = requests.get(rest_api_url + obj['urls']['describe'], headers=rest_headers)
+        with open(f'./results/schema/OBJ_{obj}_DESCRIBE', 'w') as file:
+                file.write(schema.text)
+        return(schema.json())
+    except Exception as e:
+        raise RaccoonError(f"Failed to get schema for object {obj} from REST API") from e
+
+def perform_schema_crawl(rest_api_url, session_id, data_objects):
     """Crawl the schema via the Tooling API to extract field definitions for all custom objects."""
-    rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
-    return
+    try:
+        rest_headers = {'Authorization': 'Bearer ' + session_id, 'Sforce-Query-Options': 'batchSize=2000'}
+        output = []
+        print(data_objects, "DATA OBJECTS*********")
+        for obj in data_objects['sobjects']:
+            print(obj['urls'], "OBJ*********")
+            schema = requests.get(rest_api_url + obj['urls']['describe'], headers=rest_headers)
+            print(rest_api_url + obj['urls']['describe'], "SCHEMA TEXT*********")
+            output.append(schema.json())
+        with open('SCHEMA_CRAWL_RESULTS', 'w') as file:
+                file.write(json.dumps(output, indent=4))
+        return schema
+    except Exception as e:
+        raise RaccoonError("Failed to crawl schema via Tooling API") from e
 
 def get_data_objects(rest_api_url, session_id):
     """Retrieve all data objects via the REST API."""
@@ -280,7 +303,7 @@ def get_data_objects(rest_api_url, session_id):
         data_objects = requests.get(rest_api_url + '/sobjects/', headers=rest_headers)
         with open('CUSTOMOBS', 'w') as file:
                 file.write(data_objects.text)
-        return(data_objects.text)
+        return(data_objects.json())
     except Exception as e:
         raise RaccoonError("Failed to get custom objects from REST API") from e
 
@@ -305,8 +328,9 @@ def get_record_counts(rest_api_url, session_id):
         record_count = requests.get(rest_api_url + '/limits/recordCount', headers=rest_headers)
         records = json.loads(record_count.text)["sObjects"]
         records = sorted(records, key=itemgetter('count'), reverse=True)
+        records = [{item["name"]: item["count"]} for item in records]
         with open('record_count_results', 'w') as file:
-            file.write(str(records))
+            file.write(json.dumps(records))
     except Exception as e:
         raise RaccoonError("Failed to get record counts from REST API") from e
     return(record_count.text)
@@ -341,8 +365,8 @@ def view_available_tables(rest_query_api_url, session_id):
 def verify_session(rest_api_url, session_id):
     """Check session ID works and derive username."""
     try:
-        chatter_users_me = call_rest_api(rest_api_url, session_id)
-        # username = chatter_users_me['username']
+        oauth_users_me = call_rest_api(rest_api_url.replace('/data/v51.0', '/oauth2/userinfo'), session_id)
+        username = oauth_users_me['preferred_username']
     except:
         # could also try rest_api_url + '/connect/organization', pull out userId and get username from /sobjects/User/{userId}
         raise RaccoonError("Failed to identify user from session ID - check cookie domain is .my.salesforce.com or .cloudforce.com")
@@ -534,7 +558,7 @@ def main():
         if len(session_id) == 0:
             session_id, metadata_url = login(hostname, username, password, token)
         else:
-            # username = verify_session(rest_api_url, session_id)
+            username = verify_session(rest_api_url, session_id)
             metadata_url = 'https://' + hostname + '/services/Soap/m/' + API_VERSION + '/' + session_id.split('!')[0]
     except Exception as e:
         error("Could not login - check hostname, credentials and account permissions", e, debug)
@@ -570,6 +594,7 @@ def main():
     get_record_counts(rest_api_url, session_id)
     view_available_tables(rest_query_api_url, session_id)
     data_objects = get_data_objects(rest_api_url, session_id)
+    perform_schema_crawl(rest_api_url.replace('/services/data/v51.0', ''), session_id, data_objects)
     # enumerate_data_objects(rest_api_url, session_id, data_objects)
 
     print("\nValidating objects")
