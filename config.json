@@ -1,9 +1,9 @@
 {
-    "hostname": "https://the-synopticon.lightning.force.com/",
+    "hostname": "",
     "username": "",
     "password": "",
     "token": "",
-    "sessionId": "00Da500001O4Bmb!AQEAQJvHXockZKWE93bdzo4R.00PmWRjSUvhqrpZMrloeBJ.wirHsVMKhvSU4YC2QJVUay_vuD87if8ijouWkPSV6dXIzI7k",
+    "sessionId": "",
     "objects": ["Account", "Contact"],
     "checkLimits": true,
     "debug": 2
