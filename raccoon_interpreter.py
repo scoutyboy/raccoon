@@ -1,7 +1,10 @@
 import sys
 import json
 
-config = { "interesting_table_names": ['user', 'login', 'auth', 'permission', 'network', 'domain', 'config', 'ip'] }
+config = { 
+    "interesting_table_names": ['user', 'login', 'auth', 'permission', 'network', 'domain', 'config', 'ip'] ,
+    "interesting_columns": ['address', 'social'] 
+    }
 
 def process_args():
     output_mode = {
@@ -36,11 +39,25 @@ def return_interesting_tables(results):
         for searched_item in return_all_table_names(results):
             if search_term in searched_item.lower():
                 interesting_tables.append(searched_item)
-    return interesting_tables
+    return sorted(interesting_tables)
+
+def return_all_columns(results):
+    field_names = []
+    for res in results:
+        field_names.extend(res["columns"])
+    return sorted(set(field_names))
+
+def return_interesting_columns(results):
+    interesting_columns = []
+    for search_term in config["interesting_columns"]:
+        for searched_item in return_all_columns(results):
+            if search_term in searched_item.lower():
+                interesting_columns.append(searched_item)
+    return interesting_columns
 
 def main():
      results = load_file(sys.argv[1])
      total_record_count = total_records(results)
-     print(total_record_count, total_tables(results), return_interesting_tables(results))
+     print(return_interesting_columns(results))
 
 main()
